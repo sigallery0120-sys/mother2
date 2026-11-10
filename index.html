@@ -67,13 +67,13 @@ input[type=file]{display:none}
 <main>
   <!-- 로그인 -->
   <section class="card" id="vLogin" hidden>
-    <h2>로그인</h2>
-    <p>로그인하면 세이브가 계정에 저장돼서 어디서 열어도 이어서 할 수 있어요.</p>
-    <label>이메일 <input type="email" id="email" autocomplete="username"></label>
-    <label>비밀번호 <input type="password" id="pw" autocomplete="current-password"></label>
+    <h2>관리자 번호</h2>
+    <p>번호를 넣으면 이 기기에서는 계속 로그인돼 있어요.</p>
+    <input type="email" id="email" autocomplete="username" value="mother2-owner@example.com" hidden>
+    <label>번호 <input type="password" id="pw" inputmode="numeric" autocomplete="current-password" style="font-size:22px;letter-spacing:.3em;text-align:center"></label>
     <div class="err" id="loginErr"></div>
-    <button class="primary" id="bLogin">로그인</button>
-    <button id="bSignup">처음이면 이 이메일로 계정 만들기</button>
+    <button class="primary" id="bLogin">입장</button>
+    <button id="bSignup" hidden>처음 한 번: 이 번호로 설정하기</button>
   </section>
 
   <!-- 처음 한 번: 롬 올리기 -->
@@ -395,13 +395,18 @@ async function exportSrm() {
 
 /* ---------- 로그인 ---------- */
 async function login(signup) {
-  const email = $("email").value.trim(), password = $("pw").value;
+  const email = $("email").value.trim(), pin = $("pw").value.trim();
   $("loginErr").textContent = "";
-  if (!email || password.length < 6) { $("loginErr").textContent = "이메일과 6자 이상 비밀번호를 넣어 주세요."; return; }
+  if (!pin) { $("loginErr").textContent = "번호를 넣어 주세요."; return; }
+  const password = "mother2-pin-" + pin;   // Supabase는 6자 이상 비밀번호가 필요해서 앞에 붙임
   const fn = signup ? sb.auth.signUp({ email, password }) : sb.auth.signInWithPassword({ email, password });
   const { data, error } = await fn;
-  if (error) { $("loginErr").textContent = error.message.includes("Invalid login") ? "이메일이나 비밀번호가 맞지 않아요." : error.message; return; }
-  if (signup && !data.session) { $("loginErr").textContent = "메일함에서 확인 링크를 누른 뒤 다시 로그인해 주세요."; return; }
+  if (error) {
+    if (/not confirmed/i.test(error.message)) { $("loginErr").textContent = "설정 확인 대기 중이에요. 잠시 뒤 다시 눌러 주세요."; return; }
+    if (/invalid login/i.test(error.message)) { $("loginErr").textContent = "번호가 맞지 않아요."; $("bSignup").hidden = false; return; }
+    $("loginErr").textContent = error.message; return;
+  }
+  if (signup && !data.session) { $("loginErr").textContent = "설정을 요청했어요. 확인이 끝나면 입장을 눌러 주세요."; $("bSignup").hidden = true; return; }
   location.reload();
 }
 
@@ -430,7 +435,7 @@ window.addEventListener("pagehide", () => syncSrm());
 (async () => {
   if (!cfg.SUPABASE_URL) { setStatus("config.js에 Supabase 주소가 없어요", "warn"); return; }
   const { data } = await sb.auth.getSession();
-  if (!data.session) { show("vLogin"); setStatus("로그인해 주세요"); return; }
+  if (!data.session) { show("vLogin"); setStatus("번호를 넣어 주세요"); $("pw").focus(); return; }
   uid = data.session.user.id;
   setCloud("☁ " + data.session.user.email);
   try { await boot(null); }
