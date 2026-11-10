@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="MOTHER2">
 <title>MOTHER2</title>
 <style>
 :root{
@@ -163,10 +167,14 @@ function ask(text) {
 const local = (() => {
   let p;
   const open = () => p || (p = new Promise((res, rej) => {
-    const r = indexedDB.open("mother2-cache", 1);
-    r.onupgradeneeded = () => r.result.createObjectStore("kv");
-    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
-  }));
+    const t = setTimeout(() => rej(new Error("idb timeout")), 3000);
+    try {
+      const r = indexedDB.open("mother2-cache", 1);
+      r.onupgradeneeded = () => r.result.createObjectStore("kv");
+      r.onsuccess = () => { clearTimeout(t); res(r.result); };
+      r.onerror = () => { clearTimeout(t); rej(r.error); };
+    } catch (e) { clearTimeout(t); rej(e); }
+  }).catch(e => { p = null; throw e; }));
   const tx = async (mode, fn) => {
     const d = await open();
     return new Promise((res, rej) => {
@@ -318,6 +326,19 @@ async function boot(startState) {
 let started = false, lastSrmSig = "", lastSrmUpload = 0;
 const gm = () => window.EJS_emulator && window.EJS_emulator.gameManager;
 
+/* 일정 시간 안에 게임이 안 켜지면 자동으로 한 번 다시 시도, 그래도 안 되면 버튼 표시 */
+function startWatchdog() {
+  setTimeout(() => {
+    if (started) { try { sessionStorage.removeItem("m2retry"); } catch (e) {} return; }
+    let n = 0; try { n = +sessionStorage.getItem("m2retry") || 0; } catch (e) {}
+    if (n < 2) { try { sessionStorage.setItem("m2retry", n + 1); } catch (e) {} location.reload(); return; }
+    setStatus("게임이 켜지지 않았어요. 아래 버튼을 눌러 주세요.", "warn");
+    const b = document.createElement("button"); b.className = "primary"; b.textContent = "다시 시도";
+    b.style.cssText = "position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:9;width:auto";
+    b.onclick = () => { try { sessionStorage.removeItem("m2retry"); } catch (e) {} location.reload(); };
+    $("gamewrap").appendChild(b);
+  }, 25000);
+}
 function startEmulator(rom, srm, startState) {
   window.EJS_player = "#game";
   window.EJS_core = "snes";
@@ -326,6 +347,8 @@ function startEmulator(rom, srm, startState) {
   window.EJS_pathtodata = EJS_DATA;
   window.EJS_startOnLoaded = true;
   window.EJS_color = "#ffcf4a";
+  window.EJS_disableDatabases = true;   // 에뮬레이터 자체 캐시(IndexedDB) 끔: iOS에서 멈추는 원인
+  startWatchdog();
   window.EJS_onGameStart = async () => {
     if (started) return; started = true;
     try {
