@@ -399,14 +399,17 @@ async function login(signup) {
   $("loginErr").textContent = "";
   if (!pin) { $("loginErr").textContent = "번호를 넣어 주세요."; return; }
   const password = "mother2-pin-" + pin;   // Supabase는 6자 이상 비밀번호가 필요해서 앞에 붙임
-  const fn = signup ? sb.auth.signUp({ email, password }) : sb.auth.signInWithPassword({ email, password });
-  const { data, error } = await fn;
+  if (signup) {
+    const r = await sb.rpc("mother2_setup", { p_pin: pin });
+    if (r.error) { $("loginErr").textContent = "설정하지 못했어요: " + r.error.message; return; }
+    if (r.data === "already") { $("loginErr").textContent = "이미 설정돼 있어요. 설정한 번호로 입장해 주세요."; $("bSignup").hidden = true; return; }
+  }
+  const { data, error } = await sb.auth.signInWithPassword({ email, password });
   if (error) {
     if (/not confirmed/i.test(error.message)) { $("loginErr").textContent = "설정 확인 대기 중이에요. 잠시 뒤 다시 눌러 주세요."; return; }
     if (/invalid login/i.test(error.message)) { $("loginErr").textContent = "번호가 맞지 않아요."; $("bSignup").hidden = false; return; }
     $("loginErr").textContent = error.message; return;
   }
-  if (signup && !data.session) { $("loginErr").textContent = "설정을 요청했어요. 확인이 끝나면 입장을 눌러 주세요."; $("bSignup").hidden = true; return; }
   location.reload();
 }
 
