@@ -272,6 +272,18 @@ async function boot(startState) {
   romReady = !!rom;
   if (!rom) { show("vUpload"); setStatus("롬을 한 번 올려 주세요"); return; }
 
+  // Claude가 넣어 둔 세이브가 있으면 저장소로 옮기고 그걸로 시작
+  try {
+    const { data: imps } = await sb.from("mother2_import").select("id,kind,data_b64,label").order("id");
+    for (const imp of imps || []) {
+      const bytes = await gunzipIfNeeded(Uint8Array.from(atob(imp.data_b64), c => c.charCodeAt(0)));
+      if (imp.kind === "srm") await up(`srm/${tsName()}-upload.srm`, bytes);
+      else { await up(`states/${tsName()}-import.state`, bytes); startState = bytes; }
+      await sb.from("mother2_import").delete().eq("id", imp.id);
+      setCloud("☁ " + (imp.label || "세이브") + " 적용됨");
+    }
+  } catch (e) { console.warn("import", e); }
+
   const srms = await ls("srm", 1);
   let srm = null;
   if (srms.length) { srm = { data: await down(`srm/${srms[0].name}`), time: tsOf(srms[0].name) }; }
