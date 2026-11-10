@@ -146,7 +146,16 @@ const cfg = window.MOTHER2_CONFIG || {};
 const sb = supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
 let uid = null;
 
-function setStatus(t, cls) { const s = $("status"); s.textContent = t; s.className = cls || ""; }
+/* 켜지는 과정을 계정에 기록(문제 진단용) */
+const SESSION = Math.random().toString(36).slice(2, 8), T0 = Date.now();
+let logOn = false;
+function blog(step, info) {
+  if (!logOn) return;
+  try { sb.from("mother2_log").insert({ session: SESSION, ms: Date.now() - T0, step: String(step).slice(0, 200), info: info == null ? null : String(info).slice(0, 500), ua: navigator.userAgent.slice(0, 200) }).then(() => {}, () => {}); } catch (e) {}
+}
+window.addEventListener("error", e => blog("error", (e.message || "") + " @" + (e.filename || "").split("/").pop() + ":" + e.lineno));
+window.addEventListener("unhandledrejection", e => blog("rejection", e.reason && (e.reason.message || e.reason)));
+function setStatus(t, cls) { const s = $("status"); s.textContent = t; s.className = cls || ""; blog("status", t); }
 function setCloud(t) { $("cloud").textContent = t; }
 const fmt = ts => new Date(ts).toLocaleString("ko-KR", {month:"numeric", day:"numeric", hour:"2-digit", minute:"2-digit"});
 const show = id => { for (const v of ["vLogin","vUpload","play"]) $(v).hidden = v !== id; };
@@ -315,6 +324,12 @@ async function boot(startState) {
     }
   } catch (e) { console.warn("import", e); }
 
+  // 예전 버전이 만든 자동 저장은 모두 지움 (새 버전은 자동 저장을 만들지 않음)
+  try {
+    const autos = (await ls("states")).filter(f => f.name.includes("-auto")).map(f => P(`states/${f.name}`));
+    if (autos.length) { await store().remove(autos); blog("removed_auto", autos.length); }
+  } catch (e) {}
+
   const srms = await ls("srm", 1);
   let srm = null;
   if (srms.length) { srm = { data: await down(`srm/${srms[0].name}`), time: tsOf(srms[0].name) }; }
@@ -331,7 +346,7 @@ function startWatchdog() {
   setTimeout(() => {
     if (started) { try { sessionStorage.removeItem("m2retry"); } catch (e) {} return; }
     let n = 0; try { n = +sessionStorage.getItem("m2retry") || 0; } catch (e) {}
-    if (n < 2) { try { sessionStorage.setItem("m2retry", n + 1); } catch (e) {} location.reload(); return; }
+    if (n < 2) { try { sessionStorage.setItem("m2retry", n + 1); } catch (e) {} blog("watchdog_reload", n + 1); setTimeout(() => location.reload(), 800); return; }
     setStatus("게임이 켜지지 않았어요. 아래 버튼을 눌러 주세요.", "warn");
     const b = document.createElement("button"); b.className = "primary"; b.textContent = "다시 시도";
     b.style.cssText = "position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:9;width:auto";
@@ -349,8 +364,17 @@ function startEmulator(rom, srm, startState) {
   window.EJS_color = "#ffcf4a";
   window.EJS_disableDatabases = true;   // 에뮬레이터 자체 캐시(IndexedDB) 끔: iOS에서 멈추는 원인
   startWatchdog();
+  let probes = 0;
+  const probe = setInterval(() => {
+    if (started || ++probes > 8) { clearInterval(probe); return; }
+    const e = window.EJS_emulator, c = document.querySelector("#game canvas");
+    blog("probe", JSON.stringify({ ejs: !!e, gm: !!(e && e.gameManager), st: e && e.started, failed: e && e.failedToStart, canvas: c ? c.width + "x" + c.height : null, txt: ($("game").innerText || "").slice(0, 80) }));
+  }, 5000);
+  window.EJS_ready = () => blog("ejs_ready");
+  window.EJS_onLoadState = () => {};
   window.EJS_onGameStart = async () => {
     if (started) return; started = true;
+    blog("game_start");
     try {
       if (srm) { writeSrm(srm.data); gm().restart(); lastSrmSig = sig(srm.data); }
       // 다시 켠 직후 실제 SRAM 상태를 기준으로 잡아서, 직접 저장하기 전에는 아무것도 올리거나 지우지 않음
@@ -358,6 +382,7 @@ function startEmulator(rom, srm, startState) {
       try { const cur = gm().getSaveFile(); if (cur && cur.length) lastSrmSig = sig(new Uint8Array(cur)); } catch (e) {}
       if (startState) { await new Promise(r => setTimeout(r, 800)); gm().loadState(startState); }
       setStatus(srm ? `세이브 불러옴 (${fmt(srm.time)})` : "새 게임", "ok");
+      setTimeout(() => { const c = document.querySelector("#game canvas"); blog("after_start", c ? c.width + "x" + c.height : "no canvas"); }, 4000);
     } catch (e) { setStatus("세이브를 넣지 못했어요: " + e.message, "warn"); }
     setInterval(syncSrm, SRM_CHECK_SEC * 1000);
   };
@@ -512,6 +537,7 @@ window.addEventListener("pagehide", () => syncSrm());
   const { data } = await sb.auth.getSession();
   if (!data.session) { show("vLogin"); setStatus("번호를 넣어 주세요"); $("pw").focus(); return; }
   uid = data.session.user.id;
+  logOn = true; blog("boot", (navigator.standalone ? "homescreen " : "") + innerWidth + "x" + innerHeight);
   setCloud("☁ " + data.session.user.email);
   try { await boot(null); }
   catch (e) { setStatus("저장소에 연결하지 못했어요: " + (e.message || e), "warn"); }
