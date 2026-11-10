@@ -52,6 +52,8 @@ dialog h3{margin:0 0 6px;font-size:16px}
 dialog h4{margin:14px 0 4px;font-size:13px;color:var(--dim);font-weight:600}
 .slot{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--line);font-size:14px}
 .slot small{color:var(--dim)}
+.slot .acts{display:flex;gap:6px;flex:none}
+.slot .x{padding:6px 10px;color:var(--bad);border-color:#5a2f3a}
 .tag{font-size:11px;padding:1px 6px;border-radius:99px;background:#2c2839;color:var(--dim);margin-left:4px}
 input[type=file]{display:none}
 [hidden]{display:none!important}
@@ -89,6 +91,7 @@ input[type=file]{display:none}
     </div>
     <div class="err" id="upErr"></div>
     <button class="primary" id="bUpload" disabled>올리고 시작하기</button>
+    <button id="bUpCancel" hidden>취소하고 게임으로 돌아가기</button>
   </section>
 
   <!-- 게임 -->
@@ -108,7 +111,7 @@ input[type=file]{display:none}
   <h3>저장 기록</h3>
   <p class="none" style="margin:0;font-size:13px">상태는 그 순간으로 바로 돌아가요. 게임 세이브를 고르면 그 세이브로 처음부터 다시 켜요.</p>
   <div id="histBody"></div>
-  <div style="margin-top:12px;text-align:right"><button id="dHistoryClose">닫기</button></div>
+  <div class="row" style="margin-top:12px"><button id="bHistUpload">세이브 파일 올리기</button><button id="dHistoryClose">닫기</button></div>
 </dialog>
 
 <dialog id="dMenu">
@@ -381,18 +384,27 @@ async function showHistory() {
       items.forEach(render);
     };
     const label = n => n.includes("-manual") ? "직접 저장" : n.includes("-import") ? "가져온 Snes9x 상태" : n.includes("-upload") ? "내가 올린 파일" : n.includes("-auto") ? "자동" : "게임 안 저장";
-    const row = (text, tag, btnText, onClick) => {
+    const row = (text, tag, btnText, onClick, path) => {
       const d = document.createElement("div"); d.className = "slot";
       const sp = document.createElement("span"); sp.textContent = text;
       const t = document.createElement("span"); t.className = "tag"; t.textContent = tag; sp.appendChild(t);
+      const acts = document.createElement("span"); acts.className = "acts";
       const b = document.createElement("button"); b.textContent = btnText; b.onclick = onClick;
-      d.append(sp, b); body.appendChild(d);
+      const x = document.createElement("button"); x.className = "x"; x.textContent = "✕"; x.title = "지우기"; x.setAttribute("aria-label", "지우기");
+      x.onclick = async () => {
+        $("dHistory").close();
+        if (!await ask(`${text} (${tag})을 지울까요? 지운 건 되돌릴 수 없어요.`)) { showHistory(); return; }
+        const r = await store().remove([P(path)]);
+        setStatus(r.error ? "지우지 못했어요: " + r.error.message : `${text} 기록을 지웠어요`, r.error ? "warn" : "ok");
+        showHistory();
+      };
+      acts.append(b, x); d.append(sp, acts); body.appendChild(d);
     };
     section("상태 저장", states, f => row(fmt(tsOf(f.name)), label(f.name), "불러오기", async () => {
       $("dHistory").close(); setStatus("상태 받는 중…");
       try { gm().loadState(await down(`states/${f.name}`)); setStatus(`상태 불러옴 (${fmt(tsOf(f.name))})`, "ok"); }
       catch (e) { setStatus("불러오기 실패: " + (e.message || e), "warn"); }
-    }));
+    }, `states/${f.name}`));
     section("게임 세이브 (아빠에게 전화)", srms, f => row(fmt(tsOf(f.name)), label(f.name), "이걸로 다시 켜기", async () => {
       $("dHistory").close();
       if (!await ask(`${fmt(tsOf(f.name))} 세이브로 처음부터 다시 켤까요? 지금 진행 중인 건 저장되지 않아요.`)) return;
@@ -400,7 +412,7 @@ async function showHistory() {
       writeSrm(data); gm().restart();
       lastSrmSig = sig(data);
       setStatus(`${fmt(tsOf(f.name))} 세이브로 다시 시작`, "ok");
-    }));
+    }, `srm/${f.name}`));
   } catch (e) { body.innerHTML = ""; const p = document.createElement("p"); p.className = "err"; p.textContent = "기록을 못 불러왔어요: " + (e.message || e); body.appendChild(p); }
 }
 
@@ -449,10 +461,12 @@ $("bUpload").onclick = uploadPending;
 $("bSaveState").onclick = () => saveState("manual");
 $("bHistory").onclick = showHistory;
 $("dHistoryClose").onclick = () => $("dHistory").close();
+$("bHistUpload").onclick = () => { $("dHistory").close(); $("bAddFiles").onclick(); };
 $("bExport").onclick = exportSrm;
 $("bMenu").onclick = () => $("dMenu").showModal();
 $("dMenuClose").onclick = () => $("dMenu").close();
-$("bAddFiles").onclick = async () => { $("dMenu").close(); await syncSrm(); show("vUpload"); takeFiles([]); $("bUpload").textContent = "올리고 다시 켜기"; };
+$("bAddFiles").onclick = async () => { $("dMenu").close(); await syncSrm(); show("vUpload"); takeFiles([]); $("bUpload").textContent = "올리고 다시 켜기"; $("bUpCancel").hidden = false; };
+$("bUpCancel").onclick = () => { pending.rom = pending.srm = pending.state = null; show("play"); };
 $("bLogout").onclick = async () => { await syncSrm(); await sb.auth.signOut(); location.reload(); };
 document.addEventListener("visibilitychange", () => { if (document.hidden) syncSrm(); });
 window.addEventListener("pagehide", () => syncSrm());
