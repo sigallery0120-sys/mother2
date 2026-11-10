@@ -268,7 +268,7 @@ async function getRom() {
 
 async function boot(startState) {
   setStatus("계정 저장소 확인 중…");
-  const rom = await getRom();
+  let rom = await getRom();
   romReady = !!rom;
   if (!rom) { show("vUpload"); setStatus("롬을 한 번 올려 주세요"); return; }
 
@@ -276,6 +276,19 @@ async function boot(startState) {
   try {
     const { data: imps } = await sb.from("mother2_import").select("id,kind,data_b64,label").order("id");
     for (const imp of imps || []) {
+      if (imp.kind === "rompatch") {
+        // 롬의 바뀐 부분만 적용해서 계정의 롬을 새 버전으로 교체
+        setStatus("롬 업데이트 적용 중…");
+        const raw = await gunzipIfNeeded(Uint8Array.from(atob(imp.data_b64), c => c.charCodeAt(0)));
+        const out = new Uint8Array(rom); const dv = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+        for (let k = 0; k < raw.length;) { const o = dv.getUint32(k, true), n = dv.getUint16(k + 4, true); out.set(raw.subarray(k + 6, k + 6 + n), o); k += 6 + n; }
+        await up("rom.sfc", out);
+        await local.set("rom", { data: out, key: "new" });
+        rom = out;
+        await sb.from("mother2_import").delete().eq("id", imp.id);
+        setCloud("☁ " + (imp.label || "롬 업데이트") + " 적용됨");
+        continue;
+      }
       if (imp.kind === "cleanup") {
         // 올린 세이브(-upload)만 남기고 나머지 세이브·상태 모두 정리
         const keepSrm = (await ls("srm")).filter(f => !f.name.includes("-upload")).map(f => P(`srm/${f.name}`));
