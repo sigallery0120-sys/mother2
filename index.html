@@ -133,9 +133,6 @@ input[type=file]{display:none}
 const EJS_DATA = "https://cdn.emulatorjs.org/4.2.3/data/";
 const BUCKET = "mother2";
 const SRM_CHECK_SEC = 20;       // 게임 세이브 변경 확인 간격
-const AUTO_STATE_MIN = 10;      // 자동 상태 저장 간격
-const KEEP_AUTO_STATES = 30;    // 자동 상태 보관 개수
-const KEEP_SRM = 200;           // 게임 세이브 기록 보관 개수
 
 const $ = id => document.getElementById(id);
 const cfg = window.MOTHER2_CONFIG || {};
@@ -276,6 +273,16 @@ async function boot(startState) {
   try {
     const { data: imps } = await sb.from("mother2_import").select("id,kind,data_b64,label").order("id");
     for (const imp of imps || []) {
+      if (imp.kind === "cleanup") {
+        // 올린 세이브(-upload)만 남기고 나머지 세이브·상태 모두 정리
+        const keepSrm = (await ls("srm")).filter(f => !f.name.includes("-upload")).map(f => P(`srm/${f.name}`));
+        const allStates = (await ls("states")).map(f => P(`states/${f.name}`));
+        const del = keepSrm.concat(allStates);
+        if (del.length) { const r = await store().remove(del); if (r.error) throw r.error; }
+        await sb.from("mother2_import").delete().eq("id", imp.id);
+        setCloud("☁ 정리 완료: 올린 세이브만 남김");
+        continue;
+      }
       const bytes = await gunzipIfNeeded(Uint8Array.from(atob(imp.data_b64), c => c.charCodeAt(0)));
       if (imp.kind === "srm") await up(`srm/${tsName()}-upload.srm`, bytes);
       else { await up(`states/${tsName()}-import.state`, bytes); startState = bytes; }
@@ -307,11 +314,13 @@ function startEmulator(rom, srm, startState) {
     if (started) return; started = true;
     try {
       if (srm) { writeSrm(srm.data); gm().restart(); lastSrmSig = sig(srm.data); }
+      // 다시 켠 직후 실제 SRAM 상태를 기준으로 잡아서, 직접 저장하기 전에는 아무것도 올리거나 지우지 않음
+      await new Promise(r => setTimeout(r, 3000));
+      try { const cur = gm().getSaveFile(); if (cur && cur.length) lastSrmSig = sig(new Uint8Array(cur)); } catch (e) {}
       if (startState) { await new Promise(r => setTimeout(r, 800)); gm().loadState(startState); }
       setStatus(srm ? `세이브 불러옴 (${fmt(srm.time)})` : "새 게임", "ok");
     } catch (e) { setStatus("세이브를 넣지 못했어요: " + e.message, "warn"); }
     setInterval(syncSrm, SRM_CHECK_SEC * 1000);
-    setInterval(() => saveState("auto"), AUTO_STATE_MIN * 60000);
   };
   const s = document.createElement("script");
   s.src = EJS_DATA + "loader.js";
@@ -342,7 +351,7 @@ async function syncSrm() {
     await up(`srm/${tsName()}.srm`, data);
     lastSrmSig = s; lastSrmUpload = Date.now();
     setCloud("☁ 세이브 저장됨 " + fmt(lastSrmUpload));
-    prune("srm", KEEP_SRM).catch(() => {});
+    prune("srm", 1).catch(() => {});   // 새로 저장하면 이전 세이브는 지움
   } catch (e) { setCloud("☁ 저장 실패, 다시 시도할게요"); }
   finally { syncing = false; }
 }
@@ -354,7 +363,6 @@ async function saveState(kind) {
     await up(`states/${tsName()}-${kind}.state`, st);
     if (kind === "manual") setStatus("상태 저장됨 " + fmt(Date.now()), "ok");
     else setCloud("☁ 자동 상태 저장 " + fmt(Date.now()));
-    prune("states", KEEP_AUTO_STATES, n => n.includes("-auto")).catch(() => {});
   } catch (e) { setStatus("상태 저장 실패: " + (e.message || e), "warn"); }
 }
 
@@ -363,14 +371,16 @@ async function showHistory() {
   body.innerHTML = '<p class="none">불러오는 중…</p>';
   $("dHistory").showModal();
   try {
-    const [states, srms] = await Promise.all([ls("states", 60), ls("srm", 30)]);
+    const mine = n => n.includes("-upload") || n.includes("-import");
+    const firstMine = arr => arr.filter(f => mine(f.name)).concat(arr.filter(f => !mine(f.name)));
+    const [states, srms] = (await Promise.all([ls("states", 60), ls("srm", 30)])).map(firstMine);
     body.innerHTML = "";
     const section = (title, items, render) => {
       const h = document.createElement("h4"); h.textContent = title; body.appendChild(h);
       if (!items.length) { const p = document.createElement("p"); p.className = "none"; p.style.fontSize = "13px"; p.textContent = "아직 없어요"; body.appendChild(p); }
       items.forEach(render);
     };
-    const label = n => n.includes("-manual") ? "직접 저장" : n.includes("-import") ? "가져온 Snes9x 상태" : n.includes("-upload") ? "올린 파일" : n.includes("-auto") ? "자동" : "게임 안 저장";
+    const label = n => n.includes("-manual") ? "직접 저장" : n.includes("-import") ? "가져온 Snes9x 상태" : n.includes("-upload") ? "내가 올린 파일" : n.includes("-auto") ? "자동" : "게임 안 저장";
     const row = (text, tag, btnText, onClick) => {
       const d = document.createElement("div"); d.className = "slot";
       const sp = document.createElement("span"); sp.textContent = text;
@@ -388,7 +398,7 @@ async function showHistory() {
       if (!await ask(`${fmt(tsOf(f.name))} 세이브로 처음부터 다시 켤까요? 지금 진행 중인 건 저장되지 않아요.`)) return;
       const data = await down(`srm/${f.name}`);
       writeSrm(data); gm().restart();
-      lastSrmSig = "";  // 다음 확인 때 이 세이브가 최신으로 올라감
+      lastSrmSig = sig(data);
       setStatus(`${fmt(tsOf(f.name))} 세이브로 다시 시작`, "ok");
     }));
   } catch (e) { body.innerHTML = ""; const p = document.createElement("p"); p.className = "err"; p.textContent = "기록을 못 불러왔어요: " + (e.message || e); body.appendChild(p); }
