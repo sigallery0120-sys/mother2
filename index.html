@@ -62,6 +62,8 @@ dialog h4{margin:14px 0 4px;font-size:13px;color:var(--dim);font-weight:600}
 input[type=file]{display:none}
 [hidden]{display:none!important}
 @media (max-width:600px){ #bar button{padding:7px 9px;font-size:13px} }
+/* 에뮬레이터 자체 메뉴(아래 상태창·우클릭 메뉴) 숨김: 게임 중 저절로 올라오지 않게 */
+#game .ejs_menu_bar, #game .ejs_menu_bar_hidden, #game .ejs_context_menu { display: none !important; }
 </style>
 </head>
 <body>
@@ -105,6 +107,7 @@ input[type=file]{display:none}
       <button id="bSaveState">상태 저장</button>
       <button id="bHistory">저장 기록</button>
       <span class="sp"></span>
+      <button id="bFull">전체화면</button>
       <button id="bExport">.srm 받기</button>
       <button id="bMenu">설정</button>
     </div>
@@ -384,6 +387,7 @@ function startEmulator(rom, srm, startState) {
     4: { value: "up arrow" }, 5: { value: "down arrow" }, 6: { value: "left arrow" }, 7: { value: "right arrow" },
     8: { value: "v" },  9: { value: "d" }, 10: { value: "a" }, 11: { value: "s" }
   }, 1: {}, 2: {}, 3: {} };
+  window.EJS_Buttons = { rightClick: false, contextMenu: false };
   startWatchdog();
   let probes = 0;
   const probe = setInterval(() => {
@@ -545,6 +549,12 @@ $("bHistory").onclick = showHistory;
 $("dHistoryClose").onclick = () => $("dHistory").close();
 $("bHistUpload").onclick = () => { $("dHistory").close(); $("bAddFiles").onclick(); };
 $("bExport").onclick = exportSrm;
+$("bFull").onclick = () => {
+  const el = $("gamewrap");
+  if (document.fullscreenElement) document.exitFullscreen();
+  else if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
+  else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+};
 $("bMenu").onclick = () => $("dMenu").showModal();
 $("dMenuClose").onclick = () => $("dMenu").close();
 $("bAddFiles").onclick = async () => { $("dMenu").close(); await syncSrm(); show("vUpload"); takeFiles([]); $("bUpload").textContent = "올리고 다시 켜기"; $("bUpCancel").hidden = false; };
